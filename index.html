@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Rescate Espacial con Dragón y Puntuación</title>
+  <title>Rescate Espacial con Ranking Global</title>
   <style>
     /* Estilos básicos */
     body {
@@ -13,9 +13,8 @@
     }
     canvas {
       display: block;
-      background: #000;
     }
-    /* Información en esquina superior izquierda (nivel, tiempo, rescates) */
+    /* Información en esquina superior izquierda */
     #info {
       position: absolute;
       top: 10px;
@@ -24,7 +23,7 @@
       font-size: 18px;
       z-index: 20;
     }
-    /* Marcador en la esquina superior derecha */
+    /* Scoreboard en esquina superior derecha: sólo Score y Max Score */
     #scoreboard {
       position: absolute;
       top: 10px;
@@ -33,6 +32,34 @@
       font-size: 18px;
       z-index: 20;
       text-align: right;
+      background: rgba(0,0,0,0.5);
+      padding: 5px;
+      border-radius: 4px;
+    }
+    /* Pantalla de inicio */
+    #startScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.8);
+      z-index: 30;
+    }
+    #startScreen button {
+      font-size: 24px;
+      padding: 10px 20px;
+      cursor: pointer;
+    }
+    /* Tabla de Top Scores en la pantalla de inicio */
+    #startRanking {
+      color: white;
+      margin-top: 20px;
+      font-size: 14px;
     }
     /* Pantalla de Game Over */
     #gameOverScreen {
@@ -42,10 +69,10 @@
       width: 100%;
       height: 100%;
       display: none;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      flex-direction: column;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.8);
       z-index: 30;
     }
     #gameOverScreen h1 {
@@ -59,58 +86,166 @@
       padding: 10px 20px;
       cursor: pointer;
     }
+    /* Tabla de Top Scores en Game Over */
+    #gameOverRanking {
+      color: white;
+      margin-top: 20px;
+      font-size: 14px;
+    }
+    /* Botón para silenciar/reproducir música (esquina inferior derecha) */
+    #musicToggleButton {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      z-index: 20;
+      font-size: 18px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    /* Modal de iniciales en Game Over */
+    #initialsModal {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(50,50,50,0.95);
+      padding: 20px;
+      border-radius: 10px;
+      z-index: 40;
+      color: #fff;
+      text-align: center;
+    }
+    #initialsModal input {
+      font-size: 18px;
+      text-transform: uppercase;
+      width: 80px;
+      text-align: center;
+    }
+    #initialsModal button {
+      font-size: 18px;
+      margin-left: 10px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
   </style>
+  
+  <!-- Incluir Firebase (modo compat) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 </head>
 <body>
+  <!-- Banda sonora 8-bit -->
+  <audio id="bgMusic" loop preload="auto">
+    <source src="retro8bit.mp3" type="audio/mpeg">
+    Tu navegador no soporta el elemento de audio.
+  </audio>
+  
   <canvas id="gameCanvas"></canvas>
   <div id="info"></div>
   <div id="scoreboard"></div>
+  
+  <!-- Pantalla de inicio -->
+  <div id="startScreen">
+    <button id="startButton">Jugar</button>
+    <div id="startRanking"></div>
+  </div>
+  
+  <!-- Pantalla de Game Over -->
   <div id="gameOverScreen">
     <h1>Game Over</h1>
     <button id="restartButton">Restart</button>
-    <div id="newHigh" style="color: yellow; font-size: 32px; margin-top:20px;"></div>
+    <div id="gameOverRanking"></div>
   </div>
+  
+  <!-- Modal para pedir las iniciales (solo si califica para Top 10) -->
+  <div id="initialsModal">
+    <h2>Nuevo Top Score</h2>
+    <p>Ingresa tus iniciales (3 letras):</p>
+    <input type="text" id="initialsInput" maxlength="3" />
+    <button id="initialsSubmitButton">Enviar</button>
+  </div>
+  
+  <!-- Botón para silenciar/reproducir música -->
+  <button id="musicToggleButton">Silenciar</button>
+  
   <script>
-    // CONFIGURACIÓN DEL CANVAS Y VARIABLES GLOBALES
+    /***** Firebase CONFIGURACIÓN *****/
+    const firebaseConfig = {
+      apiKey: "AIzaSyBa52EuvOQAyVj3w7givVeJBLkq11bYVs8",
+      authDomain: "draconianranking.firebaseapp.com",
+      databaseURL: "https://draconianranking-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "draconianranking",
+      storageBucket: "draconianranking.firebasestorage.app",
+      messagingSenderId: "330210365912",
+      appId: "1:330210365912:web:bb75fe15473e7cae95e2ad"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // Funciones para obtener y mostrar el ranking Top 10
+    function getTopScores(callback) {
+      db.collection("scores").orderBy("score", "desc").limit(10).get()
+        .then((querySnapshot) => {
+          let scores = [];
+          querySnapshot.forEach((doc) => {
+            scores.push(doc.data());
+          });
+          callback(scores);
+        })
+        .catch((error) => {
+          console.error("Error fetching top scores:", error);
+          callback([]);
+        });
+    }
+    function updateRankingDisplay(targetElementId) {
+      getTopScores(scores => {
+        let html = "<h2>Top 10 Scores</h2><table border='1' style='width:100%; border-collapse: collapse;'>";
+        html += "<tr><th>#</th><th>Name</th><th>Score</th></tr>";
+        scores.forEach((s, i) => {
+          html += `<tr><td>${i + 1}</td><td>${s.initials}</td><td>${s.score}</td></tr>`;
+        });
+        html += "</table>";
+        document.getElementById(targetElementId).innerHTML = html;
+      });
+    }
+
+    /***** CONFIGURACIÓN DEL JUEGO *****/
     const canvas = document.getElementById("gameCanvas");
     const ctx = canvas.getContext("2d");
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-
-    // Dimensiones del mundo (scroll vertical)
-    const worldHeight = 3000;  // Altura total del nivel
+    const worldHeight = 3000;
     const doorWidth = 100, doorHeight = 20;
-    const bottomDoor = {
-      x: canvas.width / 2 - doorWidth / 2,
-      y: worldHeight - 100,
-      width: doorWidth,
-      height: doorHeight
+    const bottomDoor = { 
+      x: canvas.width / 2 - doorWidth / 2, 
+      y: worldHeight - 100, 
+      width: doorWidth, 
+      height: doorHeight 
     };
-    const topDoor = {
-      x: canvas.width / 2 - doorWidth / 2,
-      y: 20,
-      width: doorWidth,
-      height: doorHeight
+    const topDoor = { 
+      x: canvas.width / 2 - doorWidth / 2, 
+      y: 20, 
+      width: doorWidth, 
+      height: doorHeight 
     };
 
-    // Estados del juego
-    let level = 1;           // Cada nivel incrementa en 1 la cantidad de astronautas a rescatar.
-    let gameState = "playing";  // "playing", "gameOver", "levelComplete"
-    let startTime = Date.now();
-    const timeLimit = 40;    // El nivel dura 40 s; sin embargo, a los 30 s aparece el dragón.
+    let level = 1;  // Comienza en nivel 1 (1 astronauta)
+    let gameState = "waiting"; // Espera hasta pulsar "Jugar"
+    let startTime = 0; // Se inicializa al comenzar la partida
+    const timeLimit = 40;  // Bonus calculado sobre 40 s
 
-    // Variables de puntuación y high score
     let score = 0;
-    let highScore = parseInt(getCookie("highScore")) || 0;
+    let gameOverProcessed = false;
+    let globalHighScore = 0; // Se actualiza consultando el Top 10 (el primero es el récord)
     let newHighScoreAchieved = false;
 
-    // Para procesar el Game Over una sola vez
-    let gameOverProcessed = false;
-
-    // Array para fuegos artificiales
     let fireworks = [];
 
-    // Estrellas de fondo (generadas una vez para todo el mundo)
+    // Variable para el color del fondo (espacio); por defecto negro
+    let bgColor = "#000";
+
+    // Estrellas de fondo
     let stars = [];
     function initStars() {
       stars = [];
@@ -127,25 +262,24 @@
     initStars();
 
     // Parámetros del dragón
-    const dragonScale = 10;       
-    const dragonTipDistance = 24 * dragonScale;  // Distancia desde la base hasta la punta del dragón
-    const dragonBaseOffset = 8 * dragonScale;      // Mitad del ancho de la base del dragón
+    const dragonScale = 10;
+    const dragonTipDistance = 24 * dragonScale;
+    const dragonBaseOffset = 8 * dragonScale;
+    let dragon = null;
 
-    // Teclas de control
+    // Controles
     const keys = { left: false, right: false, up: false, space: false };
 
-    /* 
-      La nave se representa como un triángulo isósceles.
-      Su posición (x, y) corresponde a la base (donde están los motores).
-      La punta (de disparo) está en (0, -tipDistance) en el sistema local.
-      Con spaceship.angle == 0, la nave aparece vertical (punta hacia arriba).
-      Al presionar ↑, se aplica empuje en dirección al pico.
+    /* La nave se representa como un triángulo isósceles.
+       La posición (x,y) es la base (motores).
+       La punta (para disparar) está en (0,-tipDistance) en el sistema local.
+       Con angle = 0, la nave aparece vertical (punta hacia arriba).
     */
-    const tipDistance = 24;  // Distancia desde la base hasta la punta de la nave
+    const tipDistance = 24;
     const spaceship = {
       x: canvas.width / 2,
-      y: bottomDoor.y + 50,  // La base se sitúa justo sobre la puerta inferior.
-      angle: 0,              // 0 = vertical, apuntando hacia arriba.
+      y: bottomDoor.y + 50,
+      angle: 0,
       vx: 0,
       vy: 0,
       thrusting: false,
@@ -153,12 +287,12 @@
       shootCooldown: 0
     };
 
-    // Parámetros de disparo
+    // Disparos
     const bullets = [];
     const bulletSpeed = 8;
-    const bulletLife = 1000; // ms
+    const bulletLife = 1000;
 
-    // Astronautas encerrados en jaulas triangulares
+    // Astronautas
     let astronauts = [];
     function createAstronaut(x, y) {
       const side = 60;
@@ -184,7 +318,13 @@
         astronauts.push(createAstronaut(posX, posY));
       }
     }
-    function resetLevel() {
+    // resetLevel: si resetGame es true, se reinicia la partida completa (nivel=1, score=0);
+    // de lo contrario, solo se reinician las variables de la ronda para pasar al siguiente nivel.
+    function resetLevel(resetGame = false) {
+      if (resetGame) {
+        level = 1;
+        score = 0;
+      }
       gameState = "playing";
       startTime = Date.now();
       dragon = null;
@@ -196,11 +336,28 @@
       spaceship.shootCooldown = 0;
       bullets.length = 0;
       generateAstronauts();
+      updateRankingDisplay("startRanking");
+      // Consultar el Top 10 para actualizar el globalHighScore:
+      getTopScores(scoresArr => {
+        globalHighScore = (scoresArr.length > 0) ? scoresArr[0].score : 0;
+      });
+      bgColor = "#000"; // Fondo negro por defecto
     }
-    // Variable para el dragón (aparece a los 30 s si el nivel sigue activo)
-    let dragon = null;
 
-    // EVENTOS DE TECLADO
+    /***** FUNCIONES DE COOKIE *****/
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return "";
+    }
+    function setCookie(name, value, days) {
+      const d = new Date();
+      d.setTime(d.getTime() + (days*24*60*60*1000));
+      document.cookie = `${name}=${value};expires=${d.toUTCString()};path=/`;
+    }
+
+    /***** EVENTOS DE TECLADO *****/
     window.addEventListener("keydown", e => {
       if (e.key === "ArrowLeft") keys.left = true;
       if (e.key === "ArrowRight") keys.right = true;
@@ -214,20 +371,36 @@
       if (e.key === " ") keys.space = false;
     });
 
-    // FÍSICA Y ACTUALIZACIÓN
+    // Reproducir audio tras la interacción
+    document.body.addEventListener("click", () => {
+      const bgMusic = document.getElementById("bgMusic");
+      if (bgMusic.paused) bgMusic.play();
+    });
+
+    // Botón "Jugar" para iniciar la partida
+    document.getElementById("startButton").addEventListener("click", () => {
+      document.getElementById("startScreen").style.display = "none";
+      resetLevel();
+      gameState = "playing";
+    });
+
+    // Botón para silenciar/reproducir música
+    document.getElementById("musicToggleButton").addEventListener("click", () => {
+      const bgMusic = document.getElementById("bgMusic");
+      bgMusic.muted = !bgMusic.muted;
+      document.getElementById("musicToggleButton").innerText = bgMusic.muted ? "Reproducir" : "Silenciar";
+    });
+
+    /***** FÍSICA Y ACTUALIZACIÓN DEL JUEGO *****/
     const thrustPower = 0.15;
-    const rotationSpeed = 0.06; // radianes/frame
+    const rotationSpeed = 0.06;
     function update(delta) {
       if (gameState !== "playing") {
         if (gameState === "gameOver") updateFireworks(delta);
         return;
       }
-
-      // ROTACIÓN
       if (keys.left) spaceship.angle -= rotationSpeed;
       if (keys.right) spaceship.angle += rotationSpeed;
-
-      // EMPUJE: se aplica en la dirección del pico (0,-1 cuando angle==0)
       if (keys.up) {
         spaceship.thrusting = true;
         spaceship.vx += Math.sin(spaceship.angle) * thrustPower;
@@ -235,8 +408,6 @@
       } else {
         spaceship.thrusting = false;
       }
-
-      // Actualizar posición de la nave
       spaceship.x += spaceship.vx;
       spaceship.y += spaceship.vy;
       spaceship.vx *= 0.99;
@@ -245,22 +416,22 @@
       if (spaceship.x > canvas.width) spaceship.x = canvas.width;
       if (spaceship.y < 0) spaceship.y = 0;
       if (spaceship.y > worldHeight) spaceship.y = worldHeight;
-
-      // DISPAROS: salen desde el pico
       if (keys.space && spaceship.shootCooldown <= 0) {
         shootBullet();
         spaceship.shootCooldown = 300;
       }
       if (spaceship.shootCooldown > 0) spaceship.shootCooldown -= delta;
-
+    
       // Actualizar disparos
       for (let i = bullets.length - 1; i >= 0; i--) {
         const b = bullets[i];
         b.x += b.vx;
         b.y += b.vy;
         b.life -= delta;
-        if (b.life <= 0) { bullets.splice(i, 1); continue; }
-        // Colisión con bolas de jaulas
+        if (b.life <= 0) {
+          bullets.splice(i, 1);
+          continue;
+        }
         astronauts.forEach(ast => {
           if (!ast.free) {
             ast.balls.forEach(ball => {
@@ -275,51 +446,44 @@
           }
         });
       }
-
-      // Recoger astronautas y sumar 10 puntos por rescate (únicamente la primera vez)
+    
+      // Recoger astronautas y sumar 10 puntos por rescate
       astronauts.forEach(ast => {
         if (ast.free && !ast.rescued && distance(spaceship.x, spaceship.y, ast.x, ast.y) < spaceship.collisionRadius + 15) {
           ast.rescued = true;
           score += 10;
         }
       });
-
-      // Verificar nivel completado: todos rescatados y nave en la puerta superior
+    
+      // Si se rescatan todos y se llega a la puerta superior, se completa el nivel (sin resetear score)
       const allRescued = astronauts.every(ast => ast.rescued);
       if (allRescued && pointInRect(spaceship.x, spaceship.y, topDoor)) {
-        // Calcular bonus de tiempo: 10 puntos por cada segundo restante (según 40 s)
-        const elapsed = (Date.now() - startTime) / 1000;
-        const timeBonus = Math.max(0, Math.floor(40 - elapsed)) * 10;
+        const elapsedTime = (Date.now() - startTime) / 1000;
+        const timeBonus = Math.max(0, Math.floor(40 - elapsedTime)) * 10;
         score += 100 + timeBonus;
         gameState = "levelComplete";
-        setTimeout(() => {
-          level++;
-          resetLevel();
-        }, 1500);
+        setTimeout(() => { level++; resetLevel(false); }, 1500);
       }
-
-      // Tiempo transcurrido
-      const elapsed = (Date.now() - startTime) / 1000;
-      // A los 30 s aparece el dragón si el nivel sigue activo
-      if (elapsed >= 30 && !dragon) {
-        dragon = {
-          x: canvas.width / 2,
-          y: worldHeight + 50,
-          vy: -300 / 1000  // 300 px/s hacia arriba
-        };
+    
+      // Si han transcurrido 30 s, aparece el dragón y el fondo se torna rojizo
+      const elapsedTime = (Date.now() - startTime) / 1000;
+      if (elapsedTime >= 30 && !dragon) {
+        dragon = { x: spaceship.x, y: worldHeight + 50, vy: -300 / 1000 };
       }
       if (dragon) {
+        dragon.x = spaceship.x; // Forzar que el dragón siga la X de la nave
         dragon.y += dragon.vy * delta;
-        dragon.x += (spaceship.x - dragon.x) * 0.02;
-        const dragonCollisionRadius = spaceship.collisionRadius * dragonScale;
-        if (distance(dragon.x, dragon.y, spaceship.x, spaceship.y) < (dragonCollisionRadius + spaceship.collisionRadius) ||
-            dragon.y <= spaceship.y) {
+        // Comprobamos colisión: se considera que ocurre cuando la punta superior del dragón
+        // (dragon.y - dragonTipDistance) alcanza o sobrepasa la punta superior de la nave (spaceship.y - tipDistance)
+        if ((dragon.y - dragonTipDistance) <= (spaceship.y - tipDistance)) {
           gameState = "gameOver";
         }
+        bgColor = "#300"; // Fondo rojizo cuando el dragón está activo
+      } else {
+        bgColor = "#000"; // Fondo negro en condiciones normales
       }
     }
-
-    // Actualizar fuegos artificiales
+    
     function updateFireworks(delta) {
       for (let i = fireworks.length - 1; i >= 0; i--) {
         let p = fireworks[i];
@@ -329,8 +493,7 @@
         if (p.life <= 0) fireworks.splice(i, 1);
       }
     }
-
-    // Dibuja fuegos artificiales
+    
     function drawFireworks() {
       fireworks.forEach(p => {
         ctx.fillStyle = p.color;
@@ -341,16 +504,16 @@
         ctx.globalAlpha = 1;
       });
     }
-
-    // FUNCIONES DE UTILIDAD
+    
     function distance(x1, y1, x2, y2) {
       return Math.hypot(x2 - x1, y2 - y1);
     }
+    
     function pointInRect(x, y, rect) {
-      return x >= rect.x && x <= rect.x + rect.width &&
-             y >= rect.y && y <= rect.y + rect.height;
+      return (x >= rect.x && x <= rect.x + rect.width &&
+              y >= rect.y && y <= rect.y + rect.height);
     }
-    // Los disparos salen desde el pico de la nave.
+    
     function shootBullet() {
       const tipX = spaceship.x + Math.sin(spaceship.angle) * tipDistance;
       const tipY = spaceship.y - Math.cos(spaceship.angle) * tipDistance;
@@ -363,44 +526,17 @@
       };
       bullets.push(bullet);
     }
-
-    // FUNCIONES DE COOKIE
-    function getCookie(name) {
-      const value = `; ${document.cookie}`;
-      const parts = value.split(`; ${name}=`);
-      if (parts.length === 2) return parts.pop().split(';').shift();
-      return "";
-    }
-    function setCookie(name, value, days) {
-      const d = new Date();
-      d.setTime(d.getTime() + (days*24*60*60*1000));
-      document.cookie = `${name}=${value};expires=${d.toUTCString()};path=/`;
-    }
-
-    // FUNCIONES DE FUEGOS ARTIFICIALES
-    function spawnFireworks() {
-      for (let i = 0; i < 100; i++) {
-        fireworks.push({
-          x: canvas.width/2 + (Math.random()-0.5)*200,
-          y: canvas.height/2 + (Math.random()-0.5)*200,
-          vx: (Math.random()-0.5)*4,
-          vy: (Math.random()-0.5)*4,
-          life: 1000 + Math.random()*1000,
-          color: "hsl(" + Math.floor(Math.random()*360) + ", 100%, 50%)"
-        });
-      }
-    }
-
-    // DIBUJADO
+    
+    /***** DIBUJADO DEL JUEGO *****/
     function draw() {
-      // Calcular offset de cámara (centrado en la nave)
       let cameraY = spaceship.y - canvas.height / 2;
       if (cameraY < 0) cameraY = 0;
       if (cameraY > worldHeight - canvas.height) cameraY = worldHeight - canvas.height;
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Dibujar fondo estrellado
+    
+      // Fondo estrellado usando bgColor
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       stars.forEach(star => {
         if (star.y >= cameraY && star.y <= cameraY + canvas.height) {
           ctx.globalAlpha = star.alpha;
@@ -409,16 +545,13 @@
           ctx.globalAlpha = 1;
         }
       });
-      
+    
       ctx.save();
       ctx.translate(0, -cameraY);
-
-      // Dibujar puertas
       ctx.fillStyle = "#555";
       ctx.fillRect(topDoor.x, topDoor.y, topDoor.width, topDoor.height);
       ctx.fillRect(bottomDoor.x, bottomDoor.y, bottomDoor.width, bottomDoor.height);
-
-      // Dibujar astronautas (jaulas y, si están libres, el astronauta)
+    
       astronauts.forEach(ast => {
         if (!ast.free) {
           ctx.strokeStyle = "#0f0";
@@ -447,16 +580,14 @@
           ctx.fill();
         }
       });
-
-      // Dibujar disparos
+    
       ctx.fillStyle = "#fff";
       bullets.forEach(b => {
         ctx.beginPath();
         ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
         ctx.fill();
       });
-
-      // Dibujar la nave (triángulo isósceles; base en (0,0), pico en (0,-tipDistance))
+    
       ctx.save();
       ctx.translate(spaceship.x, spaceship.y);
       ctx.rotate(spaceship.angle);
@@ -467,7 +598,6 @@
       ctx.lineTo(-8, 0);
       ctx.closePath();
       ctx.fill();
-      // Dibujar la llama (saliente de la base, hacia abajo)
       if (spaceship.thrusting) {
         ctx.fillStyle = "orange";
         ctx.beginPath();
@@ -478,12 +608,10 @@
         ctx.fill();
       }
       ctx.restore();
-
-      // Dibujar el dragón con alas
+    
       if (dragon) {
         ctx.save();
         ctx.translate(dragon.x, dragon.y);
-        // Cuerpo del dragón: triángulo isósceles vertical (base abajo, pico arriba)
         ctx.fillStyle = "red";
         ctx.beginPath();
         ctx.moveTo(0, -dragonTipDistance);
@@ -491,40 +619,37 @@
         ctx.lineTo(-dragonBaseOffset, 0);
         ctx.closePath();
         ctx.fill();
-        // Alas: triángulos naranjas
         ctx.fillStyle = "orange";
-        // Ala derecha
         ctx.beginPath();
-        ctx.moveTo(dragonBaseOffset, -dragonTipDistance/2);
-        ctx.lineTo(dragonBaseOffset + 40, -dragonTipDistance/2 - 20);
-        ctx.lineTo(dragonBaseOffset, -dragonTipDistance/2 - 60);
+        ctx.moveTo(dragonBaseOffset, -dragonTipDistance / 2);
+        ctx.lineTo(dragonBaseOffset + 40, -dragonTipDistance / 2 - 20);
+        ctx.lineTo(dragonBaseOffset, -dragonTipDistance / 2 - 60);
         ctx.closePath();
         ctx.fill();
-        // Ala izquierda
         ctx.beginPath();
-        ctx.moveTo(-dragonBaseOffset, -dragonTipDistance/2);
-        ctx.lineTo(-dragonBaseOffset - 40, -dragonTipDistance/2 - 20);
-        ctx.lineTo(-dragonBaseOffset, -dragonTipDistance/2 - 60);
+        ctx.moveTo(-dragonBaseOffset, -dragonTipDistance / 2);
+        ctx.lineTo(-dragonBaseOffset - 40, -dragonTipDistance / 2 - 20);
+        ctx.lineTo(-dragonBaseOffset, -dragonTipDistance / 2 - 60);
         ctx.closePath();
         ctx.fill();
         ctx.restore();
       }
-
-      // Si estamos en Game Over y se ha conseguido un nuevo high score, dibujar fuegos artificiales
+    
       if (gameState === "gameOver" && newHighScoreAchieved) {
         drawFireworks();
       }
+    
       ctx.restore();
-
-      // Actualizar divs de información y marcador
+    
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       document.getElementById("info").innerHTML =
         `Nivel: ${level} | Tiempo: ${elapsed}s | Rescatados: ${astronauts.filter(a => a.rescued).length} / ${astronauts.length}`;
       document.getElementById("scoreboard").innerHTML =
-        `Score: ${score}<br>High Score: ${highScore}`;
+        `Score: ${score}<br>Max Score: ${globalHighScore}`;
+      // Actualiza la tabla de Top Scores en la pantalla de inicio (no en el scoreboard)
+      updateRankingDisplay("startRanking");
     }
-
-    // BUCLE PRINCIPAL
+    
     let lastTime = Date.now();
     function gameLoop() {
       const now = Date.now();
@@ -532,42 +657,116 @@
       lastTime = now;
       update(delta);
       draw();
-      // Procesar Game Over (una sola vez)
       if (gameState === "gameOver" && !gameOverProcessed) {
         gameOverProcessed = true;
-        // Si se supera el high score, actualizar cookie y activar fuegos artificiales
-        if (score > highScore) {
-          newHighScoreAchieved = true;
-          highScore = score;
-          setCookie("highScore", highScore, 365);
-          spawnFireworks();
-          document.getElementById("newHigh").innerHTML = "¡Nuevo Récord!";
-        } else {
-          document.getElementById("newHigh").innerHTML = "";
-        }
-        document.getElementById("gameOverScreen").style.display = "flex";
+        // Al finalizar, consulta el Top 10
+        getTopScores(topScores => {
+          let qualifies = false;
+          if (topScores.length < 10) {
+            qualifies = true;
+          } else if (score > topScores[topScores.length - 1].score) {
+            qualifies = true;
+          }
+          if (qualifies) {
+            // Mostrar el modal para pedir iniciales (en vez de prompt)
+            let storedInitials = getCookie("playerInitials") || "";
+            document.getElementById("initialsInput").value = storedInitials;
+            document.getElementById("initialsModal").style.display = "block";
+            document.getElementById("initialsSubmitButton").onclick = function() {
+              let initials = document.getElementById("initialsInput").value;
+              if (initials.length < 1) {
+                initials = "AAA";
+              } else {
+                initials = initials.substring(0, 3).toUpperCase();
+              }
+              setCookie("playerInitials", initials, 365);
+              db.collection("scores").add({
+                initials: initials,
+                score: score,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+              })
+              .then(() => {
+                console.log("Puntuación guardada en el ranking global.");
+                updateRankingDisplay("gameOverRanking");
+                document.getElementById("initialsModal").style.display = "none";
+                document.getElementById("gameOverScreen").style.display = "flex";
+              })
+              .catch(error => {
+                console.error("Error al guardar la puntuación:", error);
+              });
+            };
+          } else {
+            updateRankingDisplay("gameOverRanking");
+            document.getElementById("gameOverScreen").style.display = "flex";
+          }
+        });
       }
       requestAnimationFrame(gameLoop);
     }
-
+    
+    // Iniciar el juego (gameLoop siempre se ejecuta, pero la partida avanza solo si gameState === "playing")
     resetLevel();
-    gameLoop();
-
-    // RESTART: botón para reiniciar la partida
-    document.getElementById("restartButton").addEventListener("click", () => {
-      score = 0;
-      gameOverProcessed = false;
-      newHighScoreAchieved = false;
-      fireworks = [];
-      document.getElementById("gameOverScreen").style.display = "none";
-      resetLevel();
-      gameState = "playing";
+    updateRankingDisplay("startRanking");
+    getTopScores(scoresArr => {
+      globalHighScore = (scoresArr.length > 0) ? scoresArr[0].score : 0;
     });
-
+    gameLoop();
+    
+    document.getElementById("restartButton").addEventListener("click", () => {
+      // Reinicia la partida COMPLETA (nivel 1, score=0)
+      resetLevel(true);
+      gameState = "playing";
+      document.getElementById("gameOverScreen").style.display = "none";
+      gameOverProcessed = false;
+    });
+    
     window.addEventListener("resize", () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
     });
+    
+    function spawnFireworks() {
+      for (let i = 0; i < 100; i++) {
+        fireworks.push({
+          x: canvas.width / 2 + (Math.random() - 0.5) * 200,
+          y: canvas.height / 2 + (Math.random() - 0.5) * 200,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          life: 1000 + Math.random() * 1000,
+          color: "hsl(" + Math.floor(Math.random() * 360) + ", 100%, 50%)"
+        });
+      }
+    }
+    
+    function updateFireworks(delta) {
+      for (let i = fireworks.length - 1; i >= 0; i--) {
+        let p = fireworks[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= delta;
+        if (p.life <= 0) fireworks.splice(i, 1);
+      }
+    }
+    
+    function drawFireworks() {
+      fireworks.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = Math.max(p.life / 2000, 0);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+    }
+    
+    function distance(x1, y1, x2, y2) {
+      return Math.hypot(x2 - x1, y2 - y1);
+    }
+    
+    function pointInRect(x, y, rect) {
+      return (x >= rect.x && x <= rect.x + rect.width &&
+              y >= rect.y && y <= rect.y + rect.height);
+    }
   </script>
 </body>
 </html>
